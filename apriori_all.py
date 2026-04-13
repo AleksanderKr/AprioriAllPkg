@@ -9,21 +9,12 @@ OUT_DIR = "out"
 
 POS_KEYS = ("pos", "position", "event_idx", "idx", "order", "time", "t")
 
-
 def item_key(x: str):
-    """
-    Zwraca klucz do sortowania identyfikatorów itemów.
-    i123 sortuje jako 123, reszta leksykograficznie.
-    """
     if x.startswith("i") and x[1:].isdigit():
         return int(x[1:])
     return x
 
-
 def read_mapping(path: str) -> dict:
-    """
-    Wczytuje mapowanie item_id -> item_name z CSV (opcjonalnie).
-    """
     mapping = {}
     if not os.path.exists(path):
         return mapping
@@ -33,19 +24,13 @@ def read_mapping(path: str) -> dict:
             mapping[row["item_id"]] = row["item_name"]
     return mapping
 
-
 def read_sequences_long_itemsets(path: str):
-    """
-    Wczytuje sekwencje w formacie long i buduje sekwencje zdarzeń (itemsetów).
-    Te same (sequence_id, pos) tworzą jeden event: {item1, item2, ...}.
-    Zwraca: List[List[frozenset[str]]].
-    """
     with open(path, "r", encoding="utf-8", newline="") as f:
         r = csv.DictReader(f)
         fieldnames = [c.strip() for c in (r.fieldnames or [])]
 
         if "sequence_id" not in fieldnames:
-            raise RuntimeError("Brak kolumny sequence_id w data/sequences.csv")
+            raise RuntimeError("Missing sequence_id column in data/sequences.csv")
 
         pos_key = None
         for k in POS_KEYS:
@@ -53,10 +38,10 @@ def read_sequences_long_itemsets(path: str):
                 pos_key = k
                 break
         if pos_key is None:
-            raise RuntimeError("Brak kolumny pozycji (np. pos / order / time) w data/sequences.csv")
+            raise RuntimeError("Missing position column (e.g., pos / order / time) in data/sequences.csv")
 
         if "item" not in fieldnames:
-            raise RuntimeError("Brak kolumny item w data/sequences.csv")
+            raise RuntimeError("Missing item column in data/sequences.csv")
 
         by_sid_pos = defaultdict(lambda: defaultdict(set))
         for row in r:
@@ -77,23 +62,14 @@ def read_sequences_long_itemsets(path: str):
             sequences.append(events)
     return sequences
 
-
 def is_subsequence_itemsets_indexed(seq_index, cand) -> bool:
-    """
-    Szybkie sprawdzenie dopasowania kandydata jako podsekwencji:
-    - seq_index["pos"][item] daje listę indeksów eventów zawierających item
-    - dla eventu kandydata E={a,b,c} bierzemy przecięcie pozycji a∩b∩c
-    - wybieramy najmniejszą pozycję >= aktualnej
-    """
     pos_map = seq_index["pos"]
     current = 0
 
     for ev in cand:
-        # Jeśli event jest pusty (teoretycznie nie powinien), to dopasowanie jest trywialne
         if not ev:
             continue
 
-        # Startujemy od listy pozycji pierwszego itemu, potem przecinamy
         ev_items = list(ev)
         first = ev_items[0]
         if first not in pos_map:
@@ -107,7 +83,6 @@ def is_subsequence_itemsets_indexed(seq_index, cand) -> bool:
             if not possible:
                 return False
 
-        # Szukamy najmniejszego indeksu >= current
         nxt = None
         for p in sorted(possible):
             if p >= current:
@@ -120,13 +95,7 @@ def is_subsequence_itemsets_indexed(seq_index, cand) -> bool:
 
     return True
 
-
 def support_count(cand, seq_indexes, cand_items=None) -> int:
-    """
-    Liczy support przez skanowanie bazy, ale:
-    - odrzuca sekwencje, które nie zawierają wszystkich itemów kandydata
-    - używa indeksowanego dopasowania subsekwencji
-    """
     if cand_items is None:
         cand_items = cand_items_union(cand)
 
@@ -134,11 +103,9 @@ def support_count(cand, seq_indexes, cand_items=None) -> int:
     cand_len = len(cand)
 
     for i, seq_index in enumerate(seq_indexes):
-        # Tani filtr długości
         if seq_index["len"] < cand_len:
             continue
 
-        # Tani filtr po zbiorze itemów
         if not cand_items.issubset(seq_index["union"]):
             continue
 
@@ -147,61 +114,33 @@ def support_count(cand, seq_indexes, cand_items=None) -> int:
 
     return c
 
-
 def seq_to_string(seq) -> str:
-    """
-    Formatuje sekwencję itemsetów do zapisu zbliżonego do formalnego: <{a,b},{c},{d,e}>.
-    """
     parts = []
     for ev in seq:
         inner = ",".join(sorted(ev, key=item_key))
         parts.append("{" + inner + "}")
     return "<" + ",".join(parts) + ">"
 
-
 def canonical_event(ev) -> frozenset:
-    """
-    Normalizuje event do postaci zbioru (frozenset).
-    """
     return frozenset(ev)
 
-
 def canonical_sequence(seq) -> tuple:
-    """
-    Normalizuje sekwencję do postaci hashowalnej: tuple[frozenset, ...].
-    """
     return tuple(canonical_event(ev) for ev in seq)
 
-
 def all_items_in_db(sequences) -> set:
-    """
-    Zbiera zbiór wszystkich itemów występujących w bazie sekwencji.
-    """
     items = set()
     for seq in sequences:
         for ev in seq:
             items |= set(ev)
     return items
 
-
 def event_tuple(ev) -> tuple:
-    """
-    Zwraca posortowaną krotkę itemów eventu (dla porównań i kanoniczności).
-    """
     return tuple(sorted(ev, key=item_key))
 
-
 def seq_sort_key(s) -> tuple:
-    """
-    Klucz sortowania sekwencji: najpierw liczba eventów, potem zawartość eventów.
-    """
     return (len(s), [event_tuple(e) for e in s])
 
-
 def apriori_prune_event_drop(cand, prev_set) -> bool:
-    """
-    Pruning apriori po usuwaniu całych eventów: każda (k-1)-eventowa podsekwencja musi być częsta.
-    """
     k = len(cand)
     for drop in range(k):
         sub = cand[:drop] + cand[drop + 1 :]
@@ -209,12 +148,7 @@ def apriori_prune_event_drop(cand, prev_set) -> bool:
             return False
     return True
 
-
 def apriori_prune_item_drop(cand, L_set) -> bool:
-    """
-    Pruning apriori po usuwaniu pojedynczych itemów z eventów: każda sekwencja po takim usunięciu musi być częsta.
-    To jest istotne, gdy dopuszczamy wzrost itemsetów wewnątrz eventu.
-    """
     for idx, ev in enumerate(cand):
         if len(ev) <= 1:
             continue
@@ -228,50 +162,29 @@ def apriori_prune_item_drop(cand, L_set) -> bool:
                 return False
     return True
 
-
 def gen_candidates_append_event(prev_freq_seqs):
-    """
-    Generuje kandydatów o długości k eventów przez join (AprioriAll/GSP):
-    - dla sekwencji długości m (=k-1) łączymy te, które mają taki sam sufiks/prefiks
-    - działa także dla m=1 (start do k=2)
-    Optymalizacja: grupowanie po kluczu join zamiast pełnego O(n^2).
-    """
     prev = list(prev_freq_seqs)
     prev_set = set(prev)
 
     buckets = defaultdict(list)
 
-    # Grupowanie po sufiksie (dla m=1 sufiks jest pusty tuple, więc wszystkie trafią do jednego koszyka)
     for s in prev:
-        key = s[1:]  # sufiks bez pierwszego eventu
+        key = s[1:]
         buckets[key].append(s)
 
     cands = set()
 
-    # W każdej grupie łączymy wszystko ze wszystkim: a + last(b)
     for key, seqs in buckets.items():
-        # deterministycznie (opcjonalnie): seqs.sort(key=seq_sort_key)
         for a in seqs:
             for b in seqs:
                 cand = a + (b[-1],)
 
-                # Pruning event-drop: wszystkie (k-1)-eventowe podsekwencje po usunięciu eventu muszą być częste
                 if apriori_prune_event_drop(cand, prev_set):
                     cands.add(cand)
 
     return cands
 
 def gen_candidates_itemset_growth_full(frontier_seqs, all_items, Lk_set):
-    """
-    Generuje kandydatów przez pełny itemset growth dla stałej liczby eventów k:
-    - dodaje jeden item do dowolnego eventu w sekwencji,
-    - zachowuje kanoniczność wewnątrz eventu (żeby nie tworzyć duplikatów),
-    - stosuje pruning po usunięciu pojedynczego itemu z eventu względem Lk_set.
-
-    frontier_seqs: zbiór sekwencji, z których rozszerzamy (np. nowo znalezione w domknięciu).
-    all_items: posortowana lista wszystkich itemów w bazie.
-    Lk_set: zbiór już znanych częstych sekwencji o tej samej liczbie eventów k.
-    """
     cands = set()
 
     for s in frontier_seqs:
@@ -285,7 +198,6 @@ def gen_candidates_itemset_growth_full(frontier_seqs, all_items, Lk_set):
                 if it in ev:
                     continue
 
-                # Kanoniczność: dodajemy tylko itemy "większe" od maksymalnego w evencie
                 if ev_max is not None and item_key(it) <= item_key(ev_max):
                     continue
 
@@ -294,16 +206,12 @@ def gen_candidates_itemset_growth_full(frontier_seqs, all_items, Lk_set):
                 cand_list[ev_idx] = new_ev
                 cand = canonical_sequence(cand_list)
 
-                # Pruning po usunięciu pojedynczego itemu z eventu
                 if apriori_prune_item_drop(cand, Lk_set):
                     cands.add(cand)
 
     return cands
 
 def close_itemset_growth_level(Lk_counts, sequences, seq_indexes, all_items, min_sup_count):
-    """
-    Domyka poziom k pod itemset growth, ale liczy support szybciej dzięki indeksom.
-    """
     Lk_set = set(Lk_counts.keys())
     frontier = set(Lk_counts.keys())
 
@@ -331,15 +239,7 @@ def close_itemset_growth_level(Lk_counts, sequences, seq_indexes, all_items, min
 
     return Lk_counts
 
-
 def apriori_all_itemsets(sequences, min_sup_count: int) -> dict:
-    """
-    Implementuje levelwise AprioriAll dla sekwencji itemsetów:
-    - poziomy po liczbie eventów k (k=1,2,3,...),
-    - na każdym poziomie k wykonuje domknięcie itemset growth (pełne: dowolny event),
-    - support liczony przez wielokrotne skanowanie bazy (bez ID-list).
-    Zwraca słownik: sekwencja(tuple[frozenset]) -> support_count.
-    """
     n_seq = len(sequences)
     if n_seq == 0:
         return {}
@@ -347,13 +247,8 @@ def apriori_all_itemsets(sequences, min_sup_count: int) -> dict:
     all_items = sorted(all_items_in_db(sequences), key=item_key)
     seq_indexes = prepare_sequence_indexes(sequences)
 
-    # Wynik globalny: wszystkie częste sekwencje (różne k)
     L_all = {}
 
-    # =========================
-    # Poziom k=1: <{...}>
-    # =========================
-    # Najpierw singletony <{i}>
     item_sup = defaultdict(int)
     for seq in sequences:
         seen_items = set()
@@ -367,24 +262,18 @@ def apriori_all_itemsets(sequences, min_sup_count: int) -> dict:
     if not L1_counts:
         return {}
 
-    # Domknięcie itemsetów dla k=1 (to daje <{a,b}>, <{a,b,c}>, ...)
     L1_counts = close_itemset_growth_level(L1_counts, sequences, seq_indexes, all_items, min_sup_count)
 
     L_all.update(L1_counts)
 
-    # =========================
-    # Poziomy k>=2: sekwencje eventów
-    # =========================
     k = 2
-    prev_level = set(L1_counts.keys())  # to są częste sekwencje o długości 1 eventu
+    prev_level = set(L1_counts.keys())
 
     while prev_level:
-        # 1) Kandydaci przez dopięcie eventu (append event)
         Ck = gen_candidates_append_event(prev_level)
         if not Ck:
             break
 
-        # 2) Liczenie supportu i wybór częstych na poziomie k
         Lk_counts = {}
         for cand in Ck:
             citems = cand_items_union(cand)
@@ -396,10 +285,8 @@ def apriori_all_itemsets(sequences, min_sup_count: int) -> dict:
         if not Lk_counts:
             break
 
-        # 3) Domknięcie poziomu k pod pełnym itemset growth (dowolny event)
         Lk_counts = close_itemset_growth_level(Lk_counts, sequences, seq_indexes, all_items, min_sup_count)
 
-        # 4) Dopisanie do wyniku globalnego i przejście do następnego poziomu
         L_all.update(Lk_counts)
 
         prev_level = set(Lk_counts.keys())
@@ -410,22 +297,14 @@ def apriori_all_itemsets(sequences, min_sup_count: int) -> dict:
     return L_all
 
 def filter_maximal_sequences(seq_counts: dict) -> dict:
-    """
-    Zostawia tylko sekwencje maksymalne:
-    sekwencja S jest niemaksymalna, jeśli istnieje inna sekwencja T,
-    taka że S jest podsekwencją T (w sensie itemsetów w eventach).
-    """
-    # Sortuj od najdłuższych, żeby szybciej eliminować krótsze
     seqs = sorted(seq_counts.keys(), key=lambda s: (len(s), sum(len(ev) for ev in s)), reverse=True)
 
     maximal = {}
-    kept = []  # lista sekwencji już uznanych za maksymalne (zwykle dłuższe)
+    kept = []
 
     for s in seqs:
         is_sub = False
         for t in kept:
-            # S jest podsekwencją T jeśli każdy event S da się dopasować do eventów T
-            # z warunkiem zawierania (ev_s ⊆ ev_t) i rosnących indeksów
             i = 0
             for ev_s in s:
                 found = False
@@ -448,9 +327,6 @@ def filter_maximal_sequences(seq_counts: dict) -> dict:
     return maximal
 
 def write_sequences(path: str, seq_counts: dict, n_sequences: int):
-    """
-    Zapisuje częste sekwencje do CSV w formacie formalnym-ish: <{...},{...},...>.
-    """
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["sequence", "support_count", "support"])
@@ -459,11 +335,7 @@ def write_sequences(path: str, seq_counts: dict, n_sequences: int):
             sup = sc / n_sequences
             w.writerow([seq_to_string(s), sc, f"{sup:.6f}"])
 
-
 def write_sequences_human(path: str, seq_counts: dict, n_sequences: int, mapping: dict):
-    """
-    Zapisuje częste sekwencje do CSV, mapując item_id na nazwy przyjazne dla człowieka.
-    """
     def human_event(ev):
         return frozenset(mapping.get(it, it) for it in ev)
 
@@ -477,12 +349,6 @@ def write_sequences_human(path: str, seq_counts: dict, n_sequences: int, mapping
             w.writerow([seq_to_string(human_seq), sc, f"{sup:.6f}"])
 
 def prepare_sequence_indexes(sequences):
-    """
-    Buduje indeksy pomocnicze dla szybkiego liczenia supportu:
-    - union_items: zbiór wszystkich itemów w sekwencji (prefilter)
-    - pos_map: mapowanie item -> posortowana lista indeksów eventów, gdzie item występuje
-    Zwraca listę struktur: [{"union": set, "pos": dict[item, list[int]], "len": int}, ...]
-    """
     indexes = []
     for seq in sequences:
         union_items = set()
@@ -501,19 +367,12 @@ def prepare_sequence_indexes(sequences):
     return indexes
 
 def cand_items_union(cand):
-    """
-    Zwraca zbiór wszystkich itemów występujących w kandydacie (we wszystkich eventach).
-    """
     u = set()
     for ev in cand:
         u |= set(ev)
     return u
 
-
 def main():
-    """
-    Punkt wejścia: wczytuje sekwencje, uruchamia AprioriAll i zapisuje wyniki do katalogu out.
-    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--sequences", default=os.path.join(DATA_DIR, "sequences.csv"))
     ap.add_argument("--mapping", default=os.path.join(DATA_DIR, "mapping.csv"))
@@ -535,9 +394,8 @@ def main():
         out2 = os.path.join(args.out_dir, "frequent_sequences_human.csv")
         write_sequences_human(out2, seq_counts, len(sequences), mapping)
 
-    print(f"OK: znaleziono {len(seq_counts)} częstych sekwencji (min_sup_count={args.min_sup_count})")
-    print("Zapisano:", out1)
-
+    print(f"OK: Found {len(seq_counts)} frequent sequences (min_sup_count={args.min_sup_count})")
+    print(f"Saved: {out1}")
 
 if __name__ == "__main__":
     main()
