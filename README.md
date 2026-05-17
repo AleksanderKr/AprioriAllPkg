@@ -5,8 +5,8 @@ A toolkit for frequent itemset mining (Apriori) and sequential pattern discovery
 ## Installation
 
 1. Clone the repository:
-   git clone https://github.com/username/AprioriAll.git
-   cd AprioriAll
+   `git clone https://github.com/username/AprioriAll.git`
+   `cd AprioriAll`
 
 2. Requirements:
    Python 3.10+. No external dependencies required.
@@ -20,17 +20,17 @@ Used for discovering patterns in chronological sequences.
 **Input data:** Requires `sequence_id` and `pos` (position/time) columns.
 
 * **Example from article:**
-  python run_pipeline.py --algo apriori_all --input data/sequences_test.csv --min-sup-count 2
+  `python run_pipeline.py --algo apriori_all --input data/sequences_test.csv --min-sup-count 2`
 
-* **SPMF data:**
-  python run_pipeline.py --algo apriori_all --input data/raw/mini_sign.csv --spmf --min-sup-count 100
+* **Unconverted SPMF data:**
+  `python run_pipeline.py --algo apriori_all --input data/raw/mini_sign.csv --spmf --min-sup-count 100`
 
 ### Apriori (Frequent Itemsets)
 Used for classic market basket analysis.
 **Input data:** Requires transaction-based format (rows of items).
 
 * **Standard command:**
-  python run_pipeline.py --algo apriori --input data/raw/mini_retail.csv --min-sup-count 20
+  `python run_pipeline.py --algo apriori --input data/raw/mini_retail.csv --min-sup-count 20`
 
 ## Command Options
 
