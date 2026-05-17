@@ -9,10 +9,12 @@ OUT_DIR = "out"
 
 POS_KEYS = ("pos", "position", "event_idx", "idx", "order", "time", "t")
 
+
 def item_key(x: str):
     if x.startswith("i") and x[1:].isdigit():
         return int(x[1:])
     return x
+
 
 def read_mapping(path: str) -> dict:
     mapping = {}
@@ -23,6 +25,7 @@ def read_mapping(path: str) -> dict:
         for row in r:
             mapping[row["item_id"]] = row["item_name"]
     return mapping
+
 
 def read_sequences_long_itemsets(path: str):
     with open(path, "r", encoding="utf-8", newline="") as f:
@@ -62,239 +65,92 @@ def read_sequences_long_itemsets(path: str):
             sequences.append(events)
     return sequences
 
-def is_subsequence_itemsets_indexed(seq_index, cand) -> bool:
-    pos_map = seq_index["pos"]
-    current = 0
 
-    for ev in cand:
-        if not ev:
-            continue
-
-        ev_items = list(ev)
-        first = ev_items[0]
-        if first not in pos_map:
-            return False
-
-        possible = set(pos_map[first])
-        for it in ev_items[1:]:
-            if it not in pos_map:
-                return False
-            possible &= set(pos_map[it])
-            if not possible:
-                return False
-
-        nxt = None
-        for p in sorted(possible):
-            if p >= current:
-                nxt = p
-                break
-        if nxt is None:
-            return False
-
-        current = nxt + 1
-
-    return True
-
-def support_count(cand, seq_indexes, cand_items=None) -> int:
-    if cand_items is None:
-        cand_items = cand_items_union(cand)
-
-    c = 0
-    cand_len = len(cand)
-
-    for i, seq_index in enumerate(seq_indexes):
-        if seq_index["len"] < cand_len:
-            continue
-
-        if not cand_items.issubset(seq_index["union"]):
-            continue
-
-        if is_subsequence_itemsets_indexed(seq_index, cand):
-            c += 1
-
-    return c
-
-def seq_to_string(seq) -> str:
-    parts = []
-    for ev in seq:
-        inner = ",".join(sorted(ev, key=item_key))
-        parts.append("{" + inner + "}")
-    return "<" + ",".join(parts) + ">"
-
-def canonical_event(ev) -> frozenset:
-    return frozenset(ev)
-
-def canonical_sequence(seq) -> tuple:
-    return tuple(canonical_event(ev) for ev in seq)
-
-def all_items_in_db(sequences) -> set:
-    items = set()
+def mine_frequent_itemsets(sequences, min_sup_count):
+    item_counts = defaultdict(int)
     for seq in sequences:
+        seen = set()
         for ev in seq:
-            items |= set(ev)
-    return items
+            seen |= ev
+        for it in seen:
+            item_counts[frozenset([it])] += 1
 
-def event_tuple(ev) -> tuple:
-    return tuple(sorted(ev, key=item_key))
-
-def seq_sort_key(s) -> tuple:
-    return (len(s), [event_tuple(e) for e in s])
-
-def apriori_prune_event_drop(cand, prev_set) -> bool:
-    k = len(cand)
-    for drop in range(k):
-        sub = cand[:drop] + cand[drop + 1 :]
-        if sub not in prev_set:
-            return False
-    return True
-
-def apriori_prune_item_drop(cand, L_set) -> bool:
-    for idx, ev in enumerate(cand):
-        if len(ev) <= 1:
-            continue
-        ev_items = sorted(ev, key=item_key)
-        for it in ev_items:
-            new_ev = frozenset(x for x in ev if x != it)
-            sub = list(cand)
-            sub[idx] = new_ev
-            sub = canonical_sequence(sub)
-            if sub not in L_set:
-                return False
-    return True
-
-def gen_candidates_append_event(prev_freq_seqs):
-    prev = list(prev_freq_seqs)
-    prev_set = set(prev)
-
-    buckets = defaultdict(list)
-
-    for s in prev:
-        key = s[1:]
-        buckets[key].append(s)
-
-    cands = set()
-
-    for key, seqs in buckets.items():
-        for a in seqs:
-            for b in seqs:
-                cand = a + (b[-1],)
-
-                if apriori_prune_event_drop(cand, prev_set):
-                    cands.add(cand)
-
-    return cands
-
-def gen_candidates_itemset_growth_full(frontier_seqs, all_items, Lk_set):
-    cands = set()
-
-    for s in frontier_seqs:
-        k = len(s)
-        for ev_idx in range(k):
-            ev = s[ev_idx]
-            ev_sorted = sorted(ev, key=item_key)
-            ev_max = ev_sorted[-1] if ev_sorted else None
-
-            for it in all_items:
-                if it in ev:
-                    continue
-
-                if ev_max is not None and item_key(it) <= item_key(ev_max):
-                    continue
-
-                new_ev = frozenset(set(ev) | {it})
-                cand_list = list(s)
-                cand_list[ev_idx] = new_ev
-                cand = canonical_sequence(cand_list)
-
-                if apriori_prune_item_drop(cand, Lk_set):
-                    cands.add(cand)
-
-    return cands
-
-def close_itemset_growth_level(Lk_counts, sequences, seq_indexes, all_items, min_sup_count):
-    Lk_set = set(Lk_counts.keys())
-    frontier = set(Lk_counts.keys())
-
-    while frontier:
-        cands = gen_candidates_itemset_growth_full(frontier, all_items, Lk_set)
-        if not cands:
-            break
-
-        new_freq = {}
-        for cand in cands:
-            if cand in Lk_set:
-                continue
-            citems = cand_items_union(cand)
-            sc = support_count(cand, seq_indexes, cand_items=citems)
-            if sc >= min_sup_count:
-                new_freq[cand] = sc
-
-        if not new_freq:
-            break
-
-        Lk_counts.update(new_freq)
-        newly = set(new_freq.keys())
-        Lk_set |= newly
-        frontier = newly
-
-    return Lk_counts
-
-def apriori_all_itemsets(sequences, min_sup_count: int) -> dict:
-    n_seq = len(sequences)
-    if n_seq == 0:
-        return {}
-
-    all_items = sorted(all_items_in_db(sequences), key=item_key)
-    seq_indexes = prepare_sequence_indexes(sequences)
-
-    L_all = {}
-
-    item_sup = defaultdict(int)
-    for seq in sequences:
-        seen_items = set()
-        for ev in seq:
-            seen_items |= set(ev)
-        for it in seen_items:
-            item_sup[(frozenset([it]),)] += 1
-
-    L1_counts = {s: c for s, c in item_sup.items() if c >= min_sup_count}
-
-    if not L1_counts:
-        return {}
-
-    L1_counts = close_itemset_growth_level(L1_counts, sequences, seq_indexes, all_items, min_sup_count)
-
-    L_all.update(L1_counts)
+    freq_itemsets = []
+    current_l = {it: c for it, c in item_counts.items() if c >= min_sup_count}
+    freq_itemsets.extend(current_l.keys())
 
     k = 2
-    prev_level = set(L1_counts.keys())
+    while current_l:
+        prev_items = list(current_l.keys())
+        candidates = set()
+        for i in range(len(prev_items)):
+            for j in range(i + 1, len(prev_items)):
+                cand = prev_items[i] | prev_items[j]
+                if len(cand) == k:
+                    valid = True
+                    for sub in combinations(cand, k - 1):
+                        if frozenset(sub) not in current_l:
+                            valid = False
+                            break
+                    if valid:
+                        candidates.add(cand)
 
-    while prev_level:
-        Ck = gen_candidates_append_event(prev_level)
-        if not Ck:
-            break
+        current_counts = defaultdict(int)
+        for seq in sequences:
+            for cand in candidates:
+                if any(cand.issubset(ev) for ev in seq):
+                    current_counts[cand] += 1
 
-        Lk_counts = {}
-        for cand in Ck:
-            citems = cand_items_union(cand)
-            sc = support_count(cand, seq_indexes, cand_items=citems)
-
-            if sc >= min_sup_count:
-                Lk_counts[cand] = sc
-
-        if not Lk_counts:
-            break
-
-        Lk_counts = close_itemset_growth_level(Lk_counts, sequences, seq_indexes, all_items, min_sup_count)
-
-        L_all.update(Lk_counts)
-
-        prev_level = set(Lk_counts.keys())
+        current_l = {cand: c for cand, c in current_counts.items() if c >= min_sup_count}
+        freq_itemsets.extend(current_l.keys())
         k += 1
 
-    L_all = filter_maximal_sequences(L_all)
+    return freq_itemsets
 
-    return L_all
+
+def transformed_subsequence_check(trans_seq, cand_tuple):
+    curr = 0
+    for cand_id in cand_tuple:
+        found = False
+        while curr < len(trans_seq):
+            if cand_id in trans_seq[curr]:
+                found = True
+                curr += 1
+                break
+            curr += 1
+        if not found:
+            return False
+    return True
+
+
+def count_sequence_support(candidates, transformed_db):
+    counts = defaultdict(int)
+    for cand in candidates:
+        for trans_seq in transformed_db:
+            if transformed_subsequence_check(trans_seq, cand):
+                counts[cand] += 1
+    return counts
+
+
+def apriori_generate_sequences(prev_ls, k):
+    prev_list = list(prev_ls)
+    candidates = set()
+    for i in range(len(prev_list)):
+        for j in range(len(prev_list)):
+            a = prev_list[i]
+            b = prev_list[j]
+            if a[:-1] == b[:-1]:
+                cand = a + (b[-1],)
+                valid = True
+                for drop in range(k):
+                    sub = cand[:drop] + cand[drop + 1:]
+                    if sub not in prev_ls:
+                        valid = False
+                        break
+                if valid:
+                    candidates.add(cand)
+    return candidates
+
 
 def filter_maximal_sequences(seq_counts: dict) -> dict:
     seqs = sorted(seq_counts.keys(), key=lambda s: (len(s), sum(len(ev) for ev in s)), reverse=True)
@@ -326,6 +182,68 @@ def filter_maximal_sequences(seq_counts: dict) -> dict:
 
     return maximal
 
+
+def seq_to_string(seq) -> str:
+    parts = []
+    for ev in seq:
+        inner = ",".join(sorted(ev, key=item_key))
+        parts.append("{" + inner + "}")
+    return "<" + ",".join(parts) + ">"
+
+
+def mapped_seq_to_string(seq_tuple) -> str:
+    return "<" + ",".join(str(i) for i in seq_tuple) + ">"
+
+
+def itemset_to_string(ev) -> str:
+    return "{" + ",".join(sorted(ev, key=item_key)) + "}"
+
+
+def event_tuple(ev) -> tuple:
+    return tuple(sorted(ev, key=item_key))
+
+
+def seq_sort_key(s) -> tuple:
+    return (len(s), [event_tuple(e) for e in s])
+
+
+def write_debug_file(directory: str, filename: str, title: str, data, data_type="seq"):
+    total = len(data)
+    print(f"-> [STEP] {title:<65} | Total Elements: {total}")
+
+    if not directory:
+        return
+    path = os.path.join(directory, filename)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"=== {title} (Total: {total}) ===\n\n")
+        if data_type == "itemset":
+            for it in sorted(data, key=lambda x: (len(x), sorted(list(x), key=item_key))):
+                f.write(f"{itemset_to_string(it)}\n")
+        elif data_type == "mapping":
+            for it, it_id in sorted(data.items(), key=lambda x: x[1]):
+                f.write(f"ID {it_id} -> {itemset_to_string(it)}\n")
+        elif data_type == "trans_db":
+            for seq in data:
+                parts = []
+                for ev in seq:
+                    parts.append("{" + ",".join(str(i) for i in sorted(ev)) + "}")
+                f.write(f"< {','.join(parts)} >\n")
+        elif data_type == "mapped_seq":
+            if isinstance(data, dict):
+                for s in sorted(data.keys()):
+                    f.write(f"{mapped_seq_to_string(s)} -> support_count: {data[s]}\n")
+            else:
+                for s in sorted(data):
+                    f.write(f"{mapped_seq_to_string(s)}\n")
+        else:
+            if isinstance(data, dict):
+                for s in sorted(data.keys(), key=seq_sort_key):
+                    f.write(f"{seq_to_string(s)} -> support_count: {data[s]}\n")
+            else:
+                for s in sorted(data, key=seq_sort_key):
+                    f.write(f"{seq_to_string(s)}\n")
+
+
 def write_sequences(path: str, seq_counts: dict, n_sequences: int):
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -334,6 +252,7 @@ def write_sequences(path: str, seq_counts: dict, n_sequences: int):
             sc = seq_counts[s]
             sup = sc / n_sequences
             w.writerow([seq_to_string(s), sc, f"{sup:.6f}"])
+
 
 def write_sequences_human(path: str, seq_counts: dict, n_sequences: int, mapping: dict):
     def human_event(ev):
@@ -348,29 +267,89 @@ def write_sequences_human(path: str, seq_counts: dict, n_sequences: int, mapping
             human_seq = tuple(human_event(ev) for ev in s)
             w.writerow([seq_to_string(human_seq), sc, f"{sup:.6f}"])
 
-def prepare_sequence_indexes(sequences):
-    indexes = []
+
+def apriori_all_pure(sequences, min_sup_count: int, debug_dir: str = None) -> dict:
+    if debug_dir:
+        write_debug_file(debug_dir, "step_1_grouped_sequences.txt", "Step 1: Sorted and Grouped Sequences Database (Ds)", sequences, "seq")
+
+    freq_itemsets = mine_frequent_itemsets(sequences, min_sup_count)
+
+    if debug_dir:
+        write_debug_file(debug_dir, "step_2_frequent_itemsets.txt", "Step 2: Discovered Frequent Itemsets (L)", freq_itemsets, "itemset")
+
+    sorted_freq_itemsets = sorted(freq_itemsets, key=lambda x: (len(x), sorted(list(x), key=item_key)))
+    mapping_to_id = {itemset: i + 1 for i, itemset in enumerate(sorted_freq_itemsets)}
+    mapping_from_id = {i + 1: itemset for i, itemset in enumerate(sorted_freq_itemsets)}
+
+    if debug_dir:
+        write_debug_file(debug_dir, "step_3_mapping.txt", "Step 3: Frequent Itemsets Mapping to Integers", mapping_to_id, "mapping")
+
+    transformed_db = []
     for seq in sequences:
-        union_items = set()
-        pos_map = defaultdict(list)
+        transformed_seq = []
+        for ev in seq:
+            ev_mapped_ids = set()
+            for itemset, itemset_id in mapping_to_id.items():
+                if itemset.issubset(ev):
+                    ev_mapped_ids.add(itemset_id)
+            if ev_mapped_ids:
+                transformed_seq.append(frozenset(ev_mapped_ids))
+        if transformed_seq:
+            transformed_db.append(transformed_seq)
 
-        for idx, ev in enumerate(seq):
-            union_items |= ev
-            for it in ev:
-                pos_map[it].append(idx)
+    if debug_dir:
+        write_debug_file(debug_dir, "step_3_transformed_db.txt", "Step 3: Transformed and Mapped Database (Dts)", transformed_db, "trans_db")
 
-        indexes.append({
-            "union": union_items,
-            "pos": dict(pos_map),
-            "len": len(seq),
-        })
-    return indexes
+    all_mapped_sequences = {}
 
-def cand_items_union(cand):
-    u = set()
-    for ev in cand:
-        u |= set(ev)
-    return u
+    ls_k = {(it_id,) for it_id in mapping_from_id.keys()}
+    current_ls_counts = count_sequence_support(ls_k, transformed_db)
+    current_ls = {cand: c for cand, c in current_ls_counts.items() if c >= min_sup_count}
+
+    if debug_dir:
+        write_debug_file(debug_dir, "step_4_k1_frequent_sequences.txt", "Step 4: Frequent 1-Sequences (LS1)", current_ls, "mapped_seq")
+
+    all_mapped_sequences.update(current_ls)
+
+    k = 2
+    prev_ls = set(current_ls.keys())
+
+    while prev_ls:
+        ck = apriori_generate_sequences(prev_ls, k)
+        if debug_dir:
+            write_debug_file(debug_dir, f"step_4_k{k}_candidates.txt", f"Step 4: Candidate {k}-Sequences (CS{k})", ck, "mapped_seq")
+
+        if not ck:
+            break
+
+        counts = count_sequence_support(ck, transformed_db)
+        current_ls = {cand: c for cand, c in counts.items() if c >= min_sup_count}
+
+        if debug_dir:
+            write_debug_file(debug_dir, f"step_4_k{k}_frequent.txt", f"Step 4: Frequent {k}-Sequences (LS{k})", current_ls, "mapped_seq")
+
+        if not current_ls:
+            break
+
+        all_mapped_sequences.update(current_ls)
+        prev_ls = set(current_ls.keys())
+        k += 1
+
+    frequent_sequences_unmapped = {}
+    for mapped_tuple, count in all_mapped_sequences.items():
+        unmapped_seq = tuple(mapping_from_id[it_id] for it_id in mapped_tuple)
+        frequent_sequences_unmapped[unmapped_seq] = count
+
+    if debug_dir:
+        write_debug_file(debug_dir, "step_5_all_frequent_before_maximal.txt", "Step 5: All Frequent Sequential Patterns Before Maximization", frequent_sequences_unmapped, "seq")
+
+    maximal_sequences = filter_maximal_sequences(frequent_sequences_unmapped)
+
+    if debug_dir:
+        write_debug_file(debug_dir, "step_5_maximal_sequences.txt", "Step 5: Final Maximal Sequential Patterns", maximal_sequences, "seq")
+
+    return maximal_sequences
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -382,10 +361,17 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
 
+    debug_dir = os.path.join(args.out_dir, "steps")
+    os.makedirs(debug_dir, exist_ok=True)
+
+    print("=== RUNNING PURE APRIORI ALL ALGORITHM ===")
+    print(f"Minimum Support Count threshold: {args.min_sup_count}")
+    print(f"Step dump files directory: {debug_dir}\n")
+
     sequences = read_sequences_long_itemsets(args.sequences)
     mapping = read_mapping(args.mapping)
 
-    seq_counts = apriori_all_itemsets(sequences, min_sup_count=args.min_sup_count)
+    seq_counts = apriori_all_pure(sequences, min_sup_count=args.min_sup_count, debug_dir=debug_dir)
 
     out1 = os.path.join(args.out_dir, "frequent_sequences.csv")
     write_sequences(out1, seq_counts, len(sequences))
@@ -394,8 +380,9 @@ def main():
         out2 = os.path.join(args.out_dir, "frequent_sequences_human.csv")
         write_sequences_human(out2, seq_counts, len(sequences), mapping)
 
-    print(f"OK: Found {len(seq_counts)} frequent sequences (min_sup_count={args.min_sup_count})")
-    print(f"Saved: {out1}")
+    print(f"\nOK: Execution finished. Discovered {len(seq_counts)} maximal sequential patterns.")
+    print(f"Final results saved to: {out1}")
+
 
 if __name__ == "__main__":
     main()
