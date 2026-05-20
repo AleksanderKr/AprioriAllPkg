@@ -6,12 +6,10 @@ import os
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--input", default="data/seq_sign.csv", help="Path to the input file")
-    ap.add_argument("--supports", nargs="+", type=int, default=[350, 300, 250, 200, 150],
-                    help="List of min_sup_count thresholds separated by spaces")
-    ap.add_argument("--algos", nargs="+", default=["apriori_all", "apriori_all_parallel", "prefixspan", "spade", "gsp"],
-                    help="Algorithms to include in the benchmark")
-    ap.add_argument("--out-dir", default="output", help="Output directory for results")
+    ap.add_argument("--input", default="data/seq_mini_sign.txt")
+    ap.add_argument("--supports", nargs="+", type=int, default=[350, 300, 250, 200, 150])
+    ap.add_argument("--algos", nargs="+", default=["apriori_all", "apriori_all_parallel", "prefixspan", "spade", "gsp"])
+    ap.add_argument("--out-dir", default="output")
     args = ap.parse_args()
 
     py = sys.executable
@@ -22,7 +20,7 @@ def main():
         try:
             os.remove(csv_path)
         except OSError as e:
-            print(f"[WARNING] Could not remove old CSV file ({e}). Results might be skewed!")
+            print(f"[WARNING] Could not remove old CSV file ({e}).")
 
     print(f"\n=== STARTING BENCHMARK SUITE ===")
     print(f"Dataset: {args.input}")
@@ -32,10 +30,18 @@ def main():
     for sup in args.supports:
         for algo in args.algos:
             print(f"\n>>> Running: {algo} | min_sup_count: {sup}")
+
+            target_input = args.input
+            if algo in ["prefixspan", "spade", "gsp"]:
+                base_name = os.path.basename(args.input)
+                if base_name.startswith("seq_"):
+                    base_name = base_name[4:]
+                target_input = os.path.join("data", "raw", base_name)
+
             cmd = [
                 py, os.path.join("utils", "run_pipeline.py"),
                 "--algo", algo,
-                "--input", args.input,
+                "--input", target_input,
                 "--min-sup-count", str(sup),
                 "--out-dir", args.out_dir
             ]

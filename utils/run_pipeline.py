@@ -63,6 +63,24 @@ def count_output_patterns(out_dir, algo):
         return 0
 
 
+def convert_spmf_to_csv(spmf_path, csv_path):
+    if not os.path.exists(spmf_path):
+        return
+    try:
+        with open(spmf_path, "r", encoding="utf-8") as f_in, open(csv_path, "w", newline="", encoding="utf-8") as f_out:
+            writer = csv.writer(f_out)
+            writer.writerow(["pattern", "support"])
+            for line in f_in:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split(" #SUP: ")
+                if len(parts) == 2:
+                    writer.writerow([parts[0].strip(), parts[1].strip()])
+    except Exception:
+        pass
+
+
 def run_and_profile(cmd):
     print(">", " ".join(cmd))
     start_time = time.perf_counter()
@@ -157,44 +175,80 @@ def main():
     args = ap.parse_args()
     py = sys.executable
 
-    target_input = args.input
+    os.makedirs(args.out_dir, exist_ok=True)
 
-    if args.spmf and (args.algo in ["apriori_all", "apriori_all_parallel"]):
-        base_name = os.path.splitext(os.path.basename(args.input))[0]
-        target_input = os.path.join("data", f"seq_{base_name}.csv")
-        print(f"--- SPMF Conversion for Sequences: {args.input} -> {target_input} ---")
+    if args.algo in ["prefixspan", "spade", "gsp"]:
+        print(f"--- Running algorithm: {args.algo} (Native SPMF Execution) ---")
 
-        converter_path = os.path.join("utils", "convert_spmf_to_seq.py")
-        subprocess.check_call([py, converter_path, "--input", args.input, "--out", target_input])
+        spmf_output = os.path.join(args.out_dir, "frequent_sequences.txt")
 
-    elif args.spmf and args.algo == "apriori":
-        print(f"--- Info: Apriori handles SPMF format directly. Skipping conversion. ---")
+        spmf_input_abs = os.path.abspath(args.input)
+        spmf_output_abs = os.path.abspath(spmf_output)
 
-    print(f"--- Running algorithm: {args.algo} ---")
+        total_sequences = 0
+        with open(spmf_input_abs, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    total_sequences += 1
 
-    algo_scripts = {
-        "apriori": os.path.join("src", "apriori.py"),
-        "apriori_all": os.path.join("src", "apriori_all.py"),
-        "apriori_all_parallel": os.path.join("src", "apriori_all_parallel.py"),
-        "prefixspan": os.path.join("utils", "prefixspan_wrapper.py"),
-        "spade": os.path.join("utils", "spade_wrapper.py"),
-        "gsp": os.path.join("utils", "gsp_wrapper.py")
-    }
+        if total_sequences > 0:
+            min_sup_relative = max(0.0001, min(1.0, args.min_sup_count / total_sequences))
+        else:
+            min_sup_relative = 0.0
 
-    script = algo_scripts[args.algo]
-    input_flag = "--transactions" if args.algo == "apriori" else "--sequences"
+        utils_dir = os.path.dirname(os.path.abspath(__file__))
+        spmf_jar_path = os.path.abspath(os.path.join(utils_dir, "spmf.jar"))
 
-    cmd = [
-        py, script,
-        input_flag, target_input,
-        "--out-dir", args.out_dir,
-        "--min-sup-count", str(args.min_sup_count)
-    ]
+        algo_mapping = {
+            "prefixspan": "PrefixSpan",
+            "spade": "SPADE",
+            "gsp": "GSP"
+        }
 
-    if args.mapping and os.path.exists(args.mapping):
-        cmd.extend(["--mapping", args.mapping])
+        cmd = [
+            "java", "-jar", spmf_jar_path,
+            "run", algo_mapping[args.algo],
+            spmf_input_abs,
+            spmf_output_abs,
+            str(min_sup_relative)
+        ]
 
-    metrics = run_and_profile(cmd)
+        metrics = run_and_profile(cmd)
+
+        csv_output = os.path.join(args.out_dir, "frequent_sequences.csv")
+        convert_spmf_to_csv(spmf_output_abs, csv_output)
+
+    else:
+        print(f"--- Running algorithm: {args.algo} ---")
+
+        target_input = args.input
+        if args.spmf and (args.algo in ["apriori_all", "apriori_all_parallel"]):
+            base_name = os.path.splitext(os.path.basename(args.input))[0]
+            target_input = os.path.join("data", f"seq_{base_name}.csv")
+            converter_path = os.path.join("utils", "convert_spmf_to_seq.py")
+            subprocess.check_call([py, converter_path, "--input", args.input, "--out", target_input])
+
+        algo_scripts = {
+            "apriori": os.path.join("src", "apriori.py"),
+            "apriori_all": os.path.join("src", "apriori_all.py"),
+            "apriori_all_parallel": os.path.join("src", "apriori_all_parallel.py")
+        }
+
+        script = algo_scripts[args.algo]
+        input_flag = "--transactions" if args.algo == "apriori" else "--sequences"
+
+        cmd = [
+            py, script,
+            input_flag, target_input,
+            "--out-dir", args.out_dir,
+            "--min-sup-count", str(args.min_sup_count)
+        ]
+
+        if args.mapping and os.path.exists(args.mapping):
+            cmd.extend(["--mapping", args.mapping])
+
+        metrics = run_and_profile(cmd)
+
     save_metrics(args.out_dir, args.algo, args.input, args.min_sup_count, metrics)
     print(f"\nOK: Pipeline finished. Results in '{args.out_dir}/'")
 
@@ -203,6 +257,6 @@ if __name__ == "__main__":
     main()
 
 r"""
-python utils/run_pipeline.py --algo apriori_all --input data/seq_sign.csv --min-sup-count 200
-python utils/run_pipeline.py --algo apriori_all_parallel --input data/seq_sign.csv --min-sup-count 200
+python utils/run_pipeline.py --algo apriori_all --input data/seq_mini_sign.txt --min-sup-count 20
+python utils/run_pipeline.py --algo prefixspan --input data/raw/mini_sign.txt --min-sup-count 20
 """

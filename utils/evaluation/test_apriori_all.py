@@ -99,3 +99,8 @@ if __name__ == "__main__":
     mode = "PARALLEL" if USE_PARALLEL else "SEQUENTIAL (PURE)"
     print(f"Execution initialized. Processing data pipelines in {mode} mode.")
     unittest.main()
+
+r"""
+python tests/test_apriori.py
+python tests/test_apriori.py --parallel
+"""
