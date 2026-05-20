@@ -1,0 +1,434 @@
+import csv
+import os
+import argparse
+import multiprocessing
+from collections import defaultdict
+from itertools import combinations
+
+DATA_DIR = "data"
+OUT_DIR = "output"
+
+POS_KEYS = ("pos", "position", "event_idx", "idx", "order", "time", "t")
+
+_global_sequences = None
+_global_transformed_db = None
+
+
+def _init_itemset_worker(seqs):
+    global _global_sequences
+    _global_sequences = seqs
+
+
+def _count_itemset_chunk(candidates_chunk):
+    counts = defaultdict(int)
+    for seq in _global_sequences:
+        for cand in candidates_chunk:
+            if any(cand.issubset(ev) for ev in seq):
+                counts[cand] += 1
+    return dict(counts)
+
+
+def _init_sequence_worker(db):
+    global _global_transformed_db
+    _global_transformed_db = db
+
+
+def _count_sequence_chunk(candidates_chunk):
+    counts = defaultdict(int)
+    for cand in candidates_chunk:
+        for trans_seq in _global_transformed_db:
+            if transformed_subsequence_check(trans_seq, cand):
+                counts[cand] += 1
+    return dict(counts)
+
+
+def _chunkify(iterable, num_chunks):
+    lst = list(iterable)
+    chunk_size = max(1, len(lst) // num_chunks)
+    return [lst[i:i + chunk_size] for i in range(0, len(lst), chunk_size)]
+
+
+def item_key(x: str):
+    if x.startswith("i") and x[1:].isdigit():
+        return int(x[1:])
+    return x
+
+
+def read_mapping(path: str) -> dict:
+    mapping = {}
+    if not os.path.exists(path):
+        return mapping
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        r = csv.DictReader(f)
+        for row in r:
+            mapping[row["item_id"]] = row["item_name"]
+    return mapping
+
+
+def read_sequences_long_itemsets(path: str):
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        r = csv.DictReader(f)
+        fieldnames = [c.strip() for c in (r.fieldnames or [])]
+
+        if "sequence_id" not in fieldnames:
+            raise RuntimeError("Missing sequence_id column in data/sequences.csv")
+
+        pos_key = None
+        for k in POS_KEYS:
+            if k in fieldnames:
+                pos_key = k
+                break
+        if pos_key is None:
+            raise RuntimeError("Missing position column (e.g., pos / order / time) in data/sequences.csv")
+
+        if "item" not in fieldnames:
+            raise RuntimeError("Missing item column in data/sequences.csv")
+
+        by_sid_pos = defaultdict(lambda: defaultdict(set))
+        for row in r:
+            sid = row["sequence_id"]
+            pos = int(row[pos_key])
+            it = row["item"].strip()
+            if it:
+                by_sid_pos[sid][pos].add(it)
+
+    sequences = []
+    for sid, pos_map in by_sid_pos.items():
+        events = []
+        for pos in sorted(pos_map.keys()):
+            items = pos_map[pos]
+            if items:
+                events.append(frozenset(items))
+        if events:
+            sequences.append(events)
+    return sequences
+
+
+def mine_frequent_itemsets(sequences, min_sup_count):
+    item_counts = defaultdict(int)
+    for seq in sequences:
+        seen = set()
+        for ev in seq:
+            seen |= ev
+        for it in seen:
+            item_counts[frozenset([it])] += 1
+
+    freq_itemsets = []
+    current_l = {it: c for it, c in item_counts.items() if c >= min_sup_count}
+    freq_itemsets.extend(current_l.keys())
+
+    k = 2
+    num_workers = multiprocessing.cpu_count()
+    while current_l:
+        prev_items = list(current_l.keys())
+        candidates = set()
+        for i in range(len(prev_items)):
+            for j in range(i + 1, len(prev_items)):
+                cand = prev_items[i] | prev_items[j]
+                if len(cand) == k:
+                    valid = True
+                    for sub in combinations(cand, k - 1):
+                        if frozenset(sub) not in current_l:
+                            valid = False
+                            break
+                    if valid:
+                        candidates.add(cand)
+
+        current_counts = defaultdict(int)
+        chunks = _chunkify(candidates, num_workers)
+        if chunks:
+            with multiprocessing.Pool(processes=num_workers, initializer=_init_itemset_worker, initargs=(sequences,)) as pool:
+                results = pool.map(_count_itemset_chunk, chunks)
+            for res in results:
+                for cand, val in res.items():
+                    current_counts[cand] += val
+
+        current_l = {cand: c for cand, c in current_counts.items() if c >= min_sup_count}
+        freq_itemsets.extend(current_l.keys())
+        k += 1
+
+    return freq_itemsets
+
+
+def transformed_subsequence_check(trans_seq, cand_tuple):
+    curr = 0
+    for cand_id in cand_tuple:
+        found = False
+        while curr < len(trans_seq):
+            if cand_id in trans_seq[curr]:
+                found = True
+                curr += 1
+                break
+            curr += 1
+        if not found:
+            return False
+    return True
+
+
+def count_sequence_support(candidates, transformed_db):
+    num_workers = multiprocessing.cpu_count()
+    chunks = _chunkify(candidates, num_workers)
+    counts = defaultdict(int)
+    if chunks:
+        with multiprocessing.Pool(processes=num_workers, initializer=_init_sequence_worker, initargs=(transformed_db,)) as pool:
+            results = pool.map(_count_sequence_chunk, chunks)
+        for res in results:
+            for cand, val in res.items():
+                counts[cand] += val
+    return counts
+
+
+def apriori_generate_sequences(prev_ls, k):
+    prev_list = list(prev_ls)
+    candidates = set()
+    for i in range(len(prev_list)):
+        for j in range(len(prev_list)):
+            a = prev_list[i]
+            b = prev_list[j]
+            if a[:-1] == b[:-1]:
+                cand = a + (b[-1],)
+                valid = True
+                for drop in range(k):
+                    sub = cand[:drop] + cand[drop + 1:]
+                    if sub not in prev_ls:
+                        valid = False
+                        break
+                if valid:
+                    candidates.add(cand)
+    return candidates
+
+
+def filter_maximal_sequences(seq_counts: dict) -> dict:
+    seqs = sorted(seq_counts.keys(), key=lambda s: (len(s), sum(len(ev) for ev in s)), reverse=True)
+
+    maximal = {}
+    kept = []
+
+    for s in seqs:
+        is_sub = False
+        for t in kept:
+            i = 0
+            for ev_s in s:
+                found = False
+                while i < len(t):
+                    if ev_s.issubset(t[i]):
+                        found = True
+                        i += 1
+                        break
+                    i += 1
+                if not found:
+                    break
+            else:
+                is_sub = True
+                break
+
+        if not is_sub:
+            maximal[s] = seq_counts[s]
+            kept.append(s)
+
+    return maximal
+
+
+def seq_to_string(seq) -> str:
+    parts = []
+    for ev in seq:
+        inner = ",".join(sorted(ev, key=item_key))
+        parts.append("{" + inner + "}")
+    return "<" + ",".join(parts) + ">"
+
+
+def mapped_seq_to_string(seq_tuple) -> str:
+    return "<" + ",".join(str(i) for i in seq_tuple) + ">"
+
+
+def itemset_to_string(ev) -> str:
+    return "{" + ",".join(sorted(ev, key=item_key)) + "}"
+
+
+def event_tuple(ev) -> tuple:
+    return tuple(sorted(ev, key=item_key))
+
+
+def seq_sort_key(s) -> tuple:
+    return (len(s), [event_tuple(e) for e in s])
+
+
+def write_debug_file(directory: str, filename: str, title: str, data, data_type="seq"):
+    total = len(data)
+    print(f"-> [STEP] {title:<65} | Total Elements: {total}")
+
+    if not directory:
+        return
+    path = os.path.join(directory, filename)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"=== {title} (Total: {total}) ===\n\n")
+        if data_type == "itemset":
+            for it in sorted(data, key=lambda x: (len(x), sorted(list(x), key=item_key))):
+                f.write(f"{itemset_to_string(it)}\n")
+        elif data_type == "mapping":
+            for it, it_id in sorted(data.items(), key=lambda x: x[1]):
+                f.write(f"ID {it_id} -> {itemset_to_string(it)}\n")
+        elif data_type == "trans_db":
+            for seq in data:
+                parts = []
+                for ev in seq:
+                    parts.append("{" + ",".join(str(i) for i in sorted(ev)) + "}")
+                f.write(f"< {','.join(parts)} >\n")
+        elif data_type == "mapped_seq":
+            if isinstance(data, dict):
+                for s in sorted(data.keys()):
+                    f.write(f"{mapped_seq_to_string(s)} -> support_count: {data[s]}\n")
+            else:
+                for s in sorted(data):
+                    f.write(f"{mapped_seq_to_string(s)}\n")
+        else:
+            if isinstance(data, dict):
+                for s in sorted(data.keys(), key=seq_sort_key):
+                    f.write(f"{seq_to_string(s)} -> support_count: {data[s]}\n")
+            else:
+                for s in sorted(data, key=seq_sort_key):
+                    f.write(f"{seq_to_string(s)}\n")
+
+
+def write_sequences(path: str, seq_counts: dict, n_sequences: int):
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["sequence", "support_count", "support"])
+        for s in sorted(seq_counts.keys(), key=seq_sort_key):
+            sc = seq_counts[s]
+            sup = sc / n_sequences
+            w.writerow([seq_to_string(s), sc, f"{sup:.6f}"])
+
+
+def write_sequences_human(path: str, seq_counts: dict, n_sequences: int, mapping: dict):
+    def human_event(ev):
+        return frozenset(mapping.get(it, it) for it in ev)
+
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["sequence_human", "support_count", "support"])
+        for s in sorted(seq_counts.keys(), key=seq_sort_key):
+            sc = seq_counts[s]
+            sup = sc / n_sequences
+            human_seq = tuple(human_event(ev) for ev in s)
+            w.writerow([seq_to_string(human_seq), sc, f"{sup:.6f}"])
+
+
+def apriori_all_par(sequences, min_sup_count: int, debug_dir: str = None) -> dict:
+    if debug_dir:
+        write_debug_file(debug_dir, "step_1_grouped_sequences.txt", "Step 1: Sorted and Grouped Sequences Database (Ds)", sequences, "seq")
+
+    freq_itemsets = mine_frequent_itemsets(sequences, min_sup_count)
+
+    if debug_dir:
+        write_debug_file(debug_dir, "step_2_frequent_itemsets.txt", "Step 2: Discovered Frequent Itemsets (L)", freq_itemsets, "itemset")
+
+    sorted_freq_itemsets = sorted(freq_itemsets, key=lambda x: (len(x), sorted(list(x), key=item_key)))
+    mapping_to_id = {itemset: i + 1 for i, itemset in enumerate(sorted_freq_itemsets)}
+    mapping_from_id = {i + 1: itemset for i, itemset in enumerate(sorted_freq_itemsets)}
+
+    if debug_dir:
+        write_debug_file(debug_dir, "step_3_mapping.txt", "Step 3: Frequent Itemsets Mapping to Integers", mapping_to_id, "mapping")
+
+    transformed_db = []
+    for seq in sequences:
+        transformed_seq = []
+        for ev in seq:
+            ev_mapped_ids = set()
+            for itemset, itemset_id in mapping_to_id.items():
+                if itemset.issubset(ev):
+                    ev_mapped_ids.add(itemset_id)
+            if ev_mapped_ids:
+                transformed_seq.append(frozenset(ev_mapped_ids))
+        if transformed_seq:
+            transformed_db.append(transformed_seq)
+
+    if debug_dir:
+        write_debug_file(debug_dir, "step_3_transformed_db.txt", "Step 3: Transformed and Mapped Database (Dts)", transformed_db, "trans_db")
+
+    all_mapped_sequences = {}
+
+    ls_k = {(it_id,) for it_id in mapping_from_id.keys()}
+    current_ls_counts = count_sequence_support(ls_k, transformed_db)
+    current_ls = {cand: c for cand, c in current_ls_counts.items() if c >= min_sup_count}
+
+    if debug_dir:
+        write_debug_file(debug_dir, "step_4_k1_frequent_sequences.txt", "Step 4: Frequent 1-Sequences (LS1)", current_ls, "mapped_seq")
+
+    all_mapped_sequences.update(current_ls)
+
+    k = 2
+    prev_ls = set(current_ls.keys())
+
+    while prev_ls:
+        ck = apriori_generate_sequences(prev_ls, k)
+        if debug_dir:
+            write_debug_file(debug_dir, f"step_4_k{k}_candidates.txt", f"Step 4: Candidate {k}-Sequences (CS{k})", ck, "mapped_seq")
+
+        if not ck:
+            break
+
+        counts = count_sequence_support(ck, transformed_db)
+        current_ls = {cand: c for cand, c in counts.items() if c >= min_sup_count}
+
+        if debug_dir:
+            write_debug_file(debug_dir, f"step_4_k{k}_frequent.txt", f"Step 4: Frequent {k}-Sequences (LS{k})", current_ls, "mapped_seq")
+
+        if not current_ls:
+            break
+
+        all_mapped_sequences.update(current_ls)
+        prev_ls = set(current_ls.keys())
+        k += 1
+
+    frequent_sequences_unmapped = {}
+    for mapped_tuple, count in all_mapped_sequences.items():
+        unmapped_seq = tuple(mapping_from_id[it_id] for it_id in mapped_tuple)
+        frequent_sequences_unmapped[unmapped_seq] = count
+
+    if debug_dir:
+        write_debug_file(debug_dir, "step_5_all_frequent_before_maximal.txt", "Step 5: All Frequent Sequential Patterns Before Maximization", frequent_sequences_unmapped, "seq")
+
+    maximal_sequences = filter_maximal_sequences(frequent_sequences_unmapped)
+
+    if debug_dir:
+        write_debug_file(debug_dir, "step_5_maximal_sequences.txt", "Step 5: Final Maximal Sequential Patterns", maximal_sequences, "seq")
+
+    return maximal_sequences
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--sequences", default=os.path.join(DATA_DIR, "sequences.csv"))
+    ap.add_argument("--mapping", default=os.path.join(DATA_DIR, "mapping.csv"))
+    ap.add_argument("--out-dir", default=OUT_DIR)
+    ap.add_argument("--min-sup-count", type=int, default=8)
+    args = ap.parse_args()
+
+    os.makedirs(args.out_dir, exist_ok=True)
+
+    debug_dir = os.path.join(args.out_dir, "steps")
+    os.makedirs(debug_dir, exist_ok=True)
+
+    print("=== RUNNING APRIORI ALL ALGORITHM ===")
+    print(f"Minimum Support Count threshold: {args.min_sup_count}")
+    print(f"Step dump files directory: {debug_dir}\n")
+
+    sequences = read_sequences_long_itemsets(args.sequences)
+    mapping = read_mapping(args.mapping)
+
+    seq_counts = apriori_all_par(sequences, min_sup_count=args.min_sup_count, debug_dir=debug_dir)
+
+    out1 = os.path.join(args.out_dir, "frequent_sequences.csv")
+    write_sequences(out1, seq_counts, len(sequences))
+
+    if mapping:
+        out2 = os.path.join(args.out_dir, "frequent_sequences_human.csv")
+        write_sequences_human(out2, seq_counts, len(sequences), mapping)
+
+    print(f"\nOK: Execution finished. Discovered {len(seq_counts)} maximal sequential patterns.")
+    print(f"Final results saved to: {out1}")
+
+
+if __name__ == "__main__":
+    main()

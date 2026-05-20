@@ -1,0 +1,12 @@
+=== Step 4: Frequent 6-Sequences (LS6) (Total: 10) ===
+
+<20,6,7,14,15,33> -> support_count: 201
+<34,6,7,14,15,33> -> support_count: 200
+<79,6,7,14,15,33> -> support_count: 204
+<79,20,6,14,29,33> -> support_count: 211
+<79,20,44,6,14,33> -> support_count: 202
+<79,80,6,7,14,33> -> support_count: 200
+<79,80,6,14,29,33> -> support_count: 212
+<79,80,20,6,14,33> -> support_count: 217
+<79,80,34,6,14,33> -> support_count: 206
+<79,80,44,6,14,33> -> support_count: 201
