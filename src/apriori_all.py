@@ -236,7 +236,7 @@ def write_sequences_human(path: str, seq_counts: dict, n_sequences: int, mapping
             w.writerow([seq_to_string(human_seq), sc, f"{sup:.6f}"])
 
 
-def apriori_all_seq(sequences, min_sup_count: int) -> dict:
+def apriori_all_seq(sequences, min_sup_count: int) -> tuple:
     write_debug_file("Step 1: Sorted and Grouped Sequences Database (Ds)", sequences)
 
     freq_itemsets = mine_frequent_itemsets(sequences, min_sup_count)
@@ -305,7 +305,7 @@ def apriori_all_seq(sequences, min_sup_count: int) -> dict:
     maximal_sequences = filter_maximal_sequences(frequent_sequences_unmapped)
     write_debug_file("Step 5: Final Maximal Sequential Patterns", maximal_sequences)
 
-    return maximal_sequences
+    return frequent_sequences_unmapped, maximal_sequences
 
 
 def main():
@@ -318,24 +318,31 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
 
-    print("=== RUNNING APRIORI ALL ALGORITHM ===")
-    print(f"Minimum Support Count threshold: {args.min_sup_count}\n")
-
     sequences = read_sequences_long_itemsets(args.sequences)
     mapping = read_mapping(args.mapping)
 
-    seq_counts = apriori_all_seq(sequences, min_sup_count=args.min_sup_count)
+    total_seqs = len(sequences)
+    sup_percent = (args.min_sup_count / total_seqs) * 100 if total_seqs > 0 else 0
 
-    out1 = os.path.join(args.out_dir, "frequent_sequences.csv")
-    write_sequences(out1, seq_counts, len(sequences))
+    print("=== RUNNING APRIORI ALL ALGORITHM ===")
+    print(f"Total sequences loaded: {total_seqs}")
+    print(f"Minimum Support Count threshold: {args.min_sup_count} ({sup_percent:.2f}%)\n")
+
+    all_seq_counts, max_seq_counts = apriori_all_seq(sequences, min_sup_count=args.min_sup_count)
+
+    out_all = os.path.join(args.out_dir, "frequent_sequences.csv")
+    write_sequences(out_all, all_seq_counts, total_seqs)
+
+    out_max = os.path.join(args.out_dir, "maximal_sequences.csv")
+    write_sequences(out_max, max_seq_counts, total_seqs)
 
     if mapping:
-        out2 = os.path.join(args.out_dir, "frequent_sequences_human.csv")
-        write_sequences_human(out2, seq_counts, len(sequences), mapping)
+        out_human = os.path.join(args.out_dir, "maximal_sequences_human.csv")
+        write_sequences_human(out_human, max_seq_counts, total_seqs, mapping)
 
-    print(f"\nOK: Execution finished. Discovered {len(seq_counts)} maximal sequential patterns.")
-    print(f"Final results saved to: {out1}")
-
+    print(f"\nOK: Execution finished. Discovered {len(all_seq_counts)} ALL frequent patterns and {len(max_seq_counts)} MAXIMAL sequential patterns.")
+    print(f"All frequent sequences saved to: {out_all}")
+    print(f"Maximal sequences saved to: {out_max}")
 
 if __name__ == "__main__":
     main()

@@ -10,16 +10,13 @@ import psutil
 def get_process_tree_metrics(parent_pid, process_cache):
     total_rss = 0
     current_cpu_total = 0.0
-
     try:
         parent = psutil.Process(parent_pid)
         all_procs = [parent] + parent.children(recursive=True)
-
         for p in all_procs:
             if p.pid not in process_cache:
                 process_cache[p.pid] = p
                 p.cpu_percent(interval=None)
-
             cached_p = process_cache[p.pid]
             try:
                 if cached_p.is_running():
@@ -29,7 +26,6 @@ def get_process_tree_metrics(parent_pid, process_cache):
                 continue
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         pass
-
     return total_rss, current_cpu_total
 
 
@@ -38,7 +34,9 @@ def count_input_sequences(file_path):
         return 0
     try:
         with open(file_path, "r", encoding="utf-8") as f:
-            if file_path.endswith(".csv"):
+            first_line = f.readline()
+            f.seek(0)
+            if "sequence_id" in first_line:
                 reader = csv.reader(f)
                 next(reader, None)
                 sids = set(row[0] for row in reader if row)
@@ -53,7 +51,6 @@ def count_output_patterns(out_dir, algo):
     csv_path = os.path.join(out_dir, "frequent_sequences.csv")
     if algo == "apriori":
         csv_path = os.path.join(out_dir, "frequent_itemsets.csv")
-
     if not os.path.exists(csv_path):
         return 0
     try:
@@ -84,11 +81,10 @@ def convert_spmf_to_csv(spmf_path, csv_path):
 def run_and_profile(cmd):
     print(">", " ".join(cmd))
     start_time = time.perf_counter()
-
     try:
         proc = subprocess.Popen(cmd)
     except FileNotFoundError:
-        print(f"Error: Script or executable not found for command: {' '.join(cmd)}")
+        print(f"Error: Executable not found for command: {' '.join(cmd)}")
         return {"duration_sec": 0, "max_memory_mb": 0, "avg_cpu_percent": 0}
 
     max_memory_bytes = 0
@@ -98,12 +94,10 @@ def run_and_profile(cmd):
     try:
         while proc.poll() is None:
             current_rss, current_cpu = get_process_tree_metrics(proc.pid, process_cache)
-
             if current_rss > max_memory_bytes:
                 max_memory_bytes = current_rss
             if current_cpu > 0.0:
                 cpu_samples.append(current_cpu)
-
             time.sleep(0.05)
     except Exception as e:
         proc.terminate()
@@ -118,17 +112,11 @@ def run_and_profile(cmd):
 
     duration = end_time - start_time
     max_mem_mb = max_memory_bytes / (1024 * 1024)
-
     logical_cores = psutil.cpu_count(logical=True) or 1
     avg_cpu = (sum(cpu_samples) / len(cpu_samples) / logical_cores) if cpu_samples else 0.0
 
     print(f"\n[METRICS] Time: {duration:.4f}s | Peak RAM: {max_mem_mb:.2f} MB | Avg CPU: {avg_cpu:.1f}%")
-
-    return {
-        "duration_sec": duration,
-        "max_memory_mb": max_mem_mb,
-        "avg_cpu_percent": avg_cpu
-    }
+    return {"duration_sec": duration, "max_memory_mb": max_mem_mb, "avg_cpu_percent": avg_cpu}
 
 
 def save_metrics(out_dir, algo, input_file, min_sup, metrics):
@@ -152,8 +140,8 @@ def save_metrics(out_dir, algo, input_file, min_sup, metrics):
 
     csv_path = os.path.join(benchmarks_dir, "benchmark_results.csv")
     file_exists = os.path.exists(csv_path)
-
     headers = list(summary_data.keys())
+
     with open(csv_path, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=headers)
         if not file_exists:
@@ -176,12 +164,11 @@ def main():
     py = sys.executable
 
     os.makedirs(args.out_dir, exist_ok=True)
+    target_input = args.input
 
     if args.algo in ["prefixspan", "spade", "gsp"]:
         print(f"--- Running algorithm: {args.algo} (Native SPMF Execution) ---")
-
         spmf_output = os.path.join(args.out_dir, "frequent_sequences.txt")
-
         spmf_input_abs = os.path.abspath(args.input)
         spmf_output_abs = os.path.abspath(spmf_output)
 
@@ -191,42 +178,28 @@ def main():
                 if line.strip():
                     total_sequences += 1
 
-        if total_sequences > 0:
-            min_sup_relative = max(0.0001, min(1.0, args.min_sup_count / total_sequences))
-        else:
-            min_sup_relative = 0.0
-
+        min_sup_relative = max(0.0001, min(1.0, args.min_sup_count / total_sequences)) if total_sequences > 0 else 0.0
         utils_dir = os.path.dirname(os.path.abspath(__file__))
         spmf_jar_path = os.path.abspath(os.path.join(utils_dir, "spmf.jar"))
 
-        algo_mapping = {
-            "prefixspan": "PrefixSpan",
-            "spade": "SPADE",
-            "gsp": "GSP"
-        }
-
-        cmd = [
-            "java", "-jar", spmf_jar_path,
-            "run", algo_mapping[args.algo],
-            spmf_input_abs,
-            spmf_output_abs,
-            str(min_sup_relative)
-        ]
+        algo_mapping = {"prefixspan": "PrefixSpan", "spade": "SPADE", "gsp": "GSP"}
+        cmd = ["java", "-jar", spmf_jar_path, "run", algo_mapping[args.algo], spmf_input_abs, spmf_output_abs,
+               str(min_sup_relative)]
 
         metrics = run_and_profile(cmd)
-
         csv_output = os.path.join(args.out_dir, "frequent_sequences.csv")
         convert_spmf_to_csv(spmf_output_abs, csv_output)
 
     else:
         print(f"--- Running algorithm: {args.algo} ---")
-
-        target_input = args.input
         if args.spmf and (args.algo in ["apriori_all", "apriori_all_parallel"]):
             base_name = os.path.splitext(os.path.basename(args.input))[0]
+            if base_name.startswith("seq_"):
+                base_name = base_name[4:]
             target_input = os.path.join("data", f"seq_{base_name}.csv")
             converter_path = os.path.join("utils", "convert_spmf_to_seq.py")
-            subprocess.check_call([py, converter_path, "--input", args.input, "--out", target_input])
+            subprocess.check_call(
+                [py, converter_path, "--input", args.input, "--out", target_input, "--direction", "spmf2csv"])
 
         algo_scripts = {
             "apriori": os.path.join("src", "apriori.py"),
@@ -236,27 +209,17 @@ def main():
 
         script = algo_scripts[args.algo]
         input_flag = "--transactions" if args.algo == "apriori" else "--sequences"
-
-        cmd = [
-            py, script,
-            input_flag, target_input,
-            "--out-dir", args.out_dir,
-            "--min-sup-count", str(args.min_sup_count)
-        ]
+        cmd = [py, script, input_flag, target_input, "--out-dir", args.out_dir, "--min-sup-count",
+               str(args.min_sup_count)]
 
         if args.mapping and os.path.exists(args.mapping):
             cmd.extend(["--mapping", args.mapping])
 
         metrics = run_and_profile(cmd)
 
-    save_metrics(args.out_dir, args.algo, args.input, args.min_sup_count, metrics)
+    save_metrics(args.out_dir, args.algo, target_input, args.min_sup_count, metrics)
     print(f"\nOK: Pipeline finished. Results in '{args.out_dir}/'")
 
 
 if __name__ == "__main__":
     main()
-
-r"""
-python utils/run_pipeline.py --algo apriori_all --input data/seq_mini_sign.txt --min-sup-count 20
-python utils/run_pipeline.py --algo prefixspan --input data/raw/mini_sign.txt --min-sup-count 20
-"""
