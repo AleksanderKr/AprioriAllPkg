@@ -129,7 +129,7 @@ The package provides a standalone utility to bidirectionally convert datasets be
   python utils/convert_spmf_to_seq.py --input data/seq_sign.csv --out data/raw/sign.txt --direction csv2spmf
   ```
 
-## Minimal Working Example (Python API)
+## Minimal Working Example
 
 Since this package is not distributed publicly via PyPI, you must execute your scripts from the root directory of the cloned repository so that the local `src` directory is accessible.
 
@@ -159,6 +159,15 @@ print("Found Maximal Sequential Patterns:")
 for pattern, support in maximal_patterns:
     print(f"Pattern: {pattern} | Support: {support}")
 ```
+
+## Testing and Reproducibility
+
+To verify the functional correctness and trace the algorithmic execution pipeline, run the unit test script:
+
+```bash
+python utils/evaluation/test_apriori_all.py
+```
+
 
 ## Testing and Reproducibility
 
