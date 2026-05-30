@@ -89,3 +89,7 @@ apriori_all_parallel,seq_bike.csv,21078,840,10.1614,1064.52,26.8,64
 prefixspan,bike.txt,21078,840,0.2831,116.65,15.6,64
 spade,bike.txt,21078,840,0.3393,189.91,17.9,64
 gsp,bike.txt,21078,840,3.7755,240.16,7.1,64
+apriori_all,seq_sign.csv,730,200,18.509,33.89,6.4,2833
+prefixspan,sign.txt,730,200,0.3894,158.04,14.6,2833
+apriori_all,seq_sign.csv,730,200,18.5943,33.81,6.4,2833
+prefixspan,sign.txt,730,200,0.3329,210.5,9.5,2833
