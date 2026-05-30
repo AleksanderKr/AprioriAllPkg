@@ -133,7 +133,7 @@ The package provides a standalone utility to bidirectionally convert datasets be
 
 Since this package is not distributed publicly via PyPI, you must execute your scripts from the root directory of the cloned repository so that the local `src` directory is accessible.
 
-```python
+```bash
 # Note: Execute this script from the repository root directory
 from src.apriori_all import AprioriAll
 from src.data_structures import SequenceDatabase
