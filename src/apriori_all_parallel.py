@@ -282,7 +282,7 @@ def write_sequences_human(path: str, seq_counts: dict, n_sequences: int, mapping
             w.writerow([seq_to_string(human_seq), sc, f"{sup:.6f}"])
 
 
-def apriori_all_par(sequences, min_sup_count: int) -> tuple:
+def apriori_all(sequences, min_sup_count: int) -> tuple:
     write_debug_file("Step 1: Sorted and Grouped Sequences Database (Ds)", sequences)
 
     freq_itemsets = mine_frequent_itemsets(sequences, min_sup_count)
@@ -374,7 +374,7 @@ def main():
     print(f"Total sequences loaded: {total_seqs}")
     print(f"Minimum Support Count threshold: {args.min_sup_count} ({sup_percent:.2f}%)\n")
 
-    all_seqs, max_seqs = apriori_all_par(sequences, min_sup_count=args.min_sup_count)
+    all_seqs, max_seqs = apriori_all(sequences, min_sup_count=args.min_sup_count)
 
     out1 = os.path.join(args.out_dir, "frequent_sequences.csv")
     write_sequences(out1, all_seqs, total_seqs)

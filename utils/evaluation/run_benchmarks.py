@@ -2,6 +2,9 @@ import subprocess
 import sys
 import argparse
 import os
+import itertools
+from tqdm import tqdm
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -21,42 +24,35 @@ def main():
         except OSError:
             pass
 
-    print(f"\n=== STARTING BENCHMARK SUITE ===")
-    print(f"Dataset: {args.input}")
-    print(f"Algorithms: {args.algos}")
-    print(f"Support thresholds: {args.supports}\n")
+    print(f"\n=== STARTING BENCHMARK SUITE ===", flush=True)
+    print(f"Dataset: {args.input}", flush=True)
+    print(f"Algorithms: {args.algos}", flush=True)
+    print(f"Support thresholds: {args.supports}\n", flush=True)
 
-    for sup in args.supports:
-        for algo in args.algos:
-            print(f"\n>>> Running: {algo} | min_sup_count: {sup}")
+    tasks = list(itertools.product(args.supports, args.algos))
 
-            target_input = args.input
-
-            if algo in ["prefixspan", "spade", "gsp"]:
-                if args.input.endswith(".csv"):
-                    base_name = os.path.basename(args.input)
-                    if base_name.startswith("seq_"):
-                        base_name = base_name[4:]
-                    base_name = base_name.replace(".csv", ".txt")
-                    target_input = os.path.join("data", "raw", base_name)
-                else:
-                    target_input = args.input
+    with tqdm(total=len(tasks), desc="Benchmark Progress", unit="run") as pbar:
+        for sup, algo in tasks:
+            pbar.set_postfix_str(f"Current: {algo} @ sup={sup}")
 
             cmd = [
-                py, os.path.join("utils", "run_pipeline.py"),
+                py, os.path.join("utils", "evaluation", "run_pipeline.py"),
                 "--algo", algo,
-                "--input", target_input,
+                "--input", args.input,
                 "--min-sup-count", str(sup),
                 "--out-dir", args.out_dir
             ]
 
             try:
                 subprocess.run(cmd, check=True)
-            except subprocess.CalledProcessError:
-                pass
+            except subprocess.CalledProcessError as e:
+                tqdm.write(f"Error running {algo}: {e}")
 
-    print("\n=== BENCHMARK SUITE FINISHED ===")
-    print(f"Results saved to {csv_path}")
+            pbar.update(1)
+
+    print("\n=== BENCHMARK SUITE FINISHED ===", flush=True)
+    print(f"Results saved to {csv_path}", flush=True)
+
 
 if __name__ == "__main__":
     main()
