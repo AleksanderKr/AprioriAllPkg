@@ -207,9 +207,48 @@ def seq_sort_key(s) -> tuple:
     return (len(s), [event_tuple(e) for e in s])
 
 
-def write_debug_file(title: str, data):
+def write_debug_file(title: str, data, debug: bool = False):
+    if not debug:
+        return
+
     total = len(data)
-    print(f"-> [STEP] {title:<65} | Total Elements: {total}")
+    print(f"\n=== {title} (Total: {total}) ===")
+
+    if total == 0:
+        print("(empty)")
+        return
+
+    if "Step 1" in title:
+        for seq in data:
+            print(seq_to_string(seq))
+
+    elif "Step 2" in title:
+        sorted_data = sorted(data, key=lambda x: (len(x), sorted(list(x), key=item_key)))
+        for itemset in sorted_data:
+            print(itemset_to_string(itemset))
+
+    elif "Mapping" in title:
+        for itemset, int_id in data.items():
+            print(f"{itemset_to_string(itemset)} -> {int_id}")
+
+    elif "Mapped Database" in title:
+        for seq in data:
+            parts = []
+            for ev in seq:
+                inner = ",".join(str(i) for i in sorted(ev))
+                parts.append("{" + inner + "}")
+            print("<" + ",".join(parts) + ">")
+
+    elif "Patterns" in title:
+        for seq in sorted(data.keys(), key=seq_sort_key):
+            print(f"{seq_to_string(seq)} (sup: {data[seq]})")
+
+    else:
+        # Obsługa Step 4: dict (LS) lub set (CS)
+        items = data.keys() if isinstance(data, dict) else data
+        for t in sorted(items):
+            count_str = f" (sup: {data[t]})" if isinstance(data, dict) else ""
+            print(mapped_seq_to_string(t) + count_str)
 
 
 def write_sequences(path: str, seq_counts: dict, n_sequences: int):
@@ -236,17 +275,17 @@ def write_sequences_human(path: str, seq_counts: dict, n_sequences: int, mapping
             w.writerow([seq_to_string(human_seq), sc, f"{sup:.6f}"])
 
 
-def apriori_all(sequences, min_sup_count: int) -> tuple:
-    write_debug_file("Step 1: Sorted and Grouped Sequences Database (Ds)", sequences)
+def apriori_all(sequences, min_sup_count: int, debug: bool = False) -> tuple:
+    write_debug_file("Step 1: Sorted and Grouped Sequences Database (Ds)", sequences, debug)
 
     freq_itemsets = mine_frequent_itemsets(sequences, min_sup_count)
-    write_debug_file("Step 2: Discovered Frequent Itemsets (L)", freq_itemsets)
+    write_debug_file("Step 2: Discovered Frequent Itemsets (L)", freq_itemsets, debug)
 
     sorted_freq_itemsets = sorted(freq_itemsets, key=lambda x: (len(x), sorted(list(x), key=item_key)))
     mapping_to_id = {itemset: i + 1 for i, itemset in enumerate(sorted_freq_itemsets)}
     mapping_from_id = {i + 1: itemset for i, itemset in enumerate(sorted_freq_itemsets)}
 
-    write_debug_file("Step 3: Frequent Itemsets Mapping to Integers", mapping_to_id)
+    write_debug_file("Step 3: Frequent Itemsets Mapping to Integers", mapping_to_id, debug)
 
     transformed_db = []
     for seq in sequences:
@@ -261,7 +300,7 @@ def apriori_all(sequences, min_sup_count: int) -> tuple:
         if transformed_seq:
             transformed_db.append(transformed_seq)
 
-    write_debug_file("Step 3: Transformed and Mapped Database (Dts)", transformed_db)
+    write_debug_file("Step 3: Transformed and Mapped Database (Dts)", transformed_db, debug)
 
     all_mapped_sequences = {}
 
@@ -269,7 +308,7 @@ def apriori_all(sequences, min_sup_count: int) -> tuple:
     current_ls_counts = count_sequence_support(ls_k, transformed_db)
     current_ls = {cand: c for cand, c in current_ls_counts.items() if c >= min_sup_count}
 
-    write_debug_file("Step 4: Frequent 1-Sequences (LS1)", current_ls)
+    write_debug_file("Step 4: Frequent 1-Sequences (LS1)", current_ls, debug)
 
     all_mapped_sequences.update(current_ls)
 
@@ -278,7 +317,7 @@ def apriori_all(sequences, min_sup_count: int) -> tuple:
 
     while prev_ls:
         ck = apriori_generate_sequences(prev_ls, k)
-        write_debug_file(f"Step 4: Candidate {k}-Sequences (CS{k})", ck)
+        write_debug_file(f"Step 4: Candidate {k}-Sequences (CS{k})", ck, debug)
 
         if not ck:
             break
@@ -286,7 +325,7 @@ def apriori_all(sequences, min_sup_count: int) -> tuple:
         counts = count_sequence_support(ck, transformed_db)
         current_ls = {cand: c for cand, c in counts.items() if c >= min_sup_count}
 
-        write_debug_file(f"Step 4: Frequent {k}-Sequences (LS{k})", current_ls)
+        write_debug_file(f"Step 4: Frequent {k}-Sequences (LS{k})", current_ls, debug)
 
         if not current_ls:
             break
@@ -300,10 +339,10 @@ def apriori_all(sequences, min_sup_count: int) -> tuple:
         unmapped_seq = tuple(mapping_from_id[it_id] for it_id in mapped_tuple)
         frequent_sequences_unmapped[unmapped_seq] = count
 
-    write_debug_file("Step 5: All Frequent Sequential Patterns Before Maximization", frequent_sequences_unmapped)
+    write_debug_file("Step 5: All Frequent Sequential Patterns Before Maximization", frequent_sequences_unmapped, debug)
 
     maximal_sequences = filter_maximal_sequences(frequent_sequences_unmapped)
-    write_debug_file("Step 5: Final Maximal Sequential Patterns", maximal_sequences)
+    write_debug_file("Step 5: Final Maximal Sequential Patterns", maximal_sequences, debug)
 
     return frequent_sequences_unmapped, maximal_sequences
 
@@ -314,6 +353,7 @@ def main():
     ap.add_argument("--mapping", default=os.path.join(DATA_DIR, "mapping.csv"))
     ap.add_argument("--out-dir", default=OUT_DIR)
     ap.add_argument("--min-sup-count", type=int, default=8)
+    ap.add_argument("--debug", action="store_true", help="Print step-by-step execution trace")
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -328,7 +368,11 @@ def main():
     print(f"Total sequences loaded: {total_seqs}")
     print(f"Minimum Support Count threshold: {args.min_sup_count} ({sup_percent:.2f}%)\n")
 
-    all_seq_counts, max_seq_counts = apriori_all(sequences, min_sup_count=args.min_sup_count)
+    all_seq_counts, max_seq_counts = apriori_all(
+        sequences,
+        min_sup_count=args.min_sup_count,
+        debug=args.debug
+    )
 
     out_all = os.path.join(args.out_dir, "frequent_sequences.csv")
     write_sequences(out_all, all_seq_counts, total_seqs)
@@ -340,9 +384,11 @@ def main():
         out_human = os.path.join(args.out_dir, "maximal_sequences_human.csv")
         write_sequences_human(out_human, max_seq_counts, total_seqs, mapping)
 
-    print(f"\nOK: Execution finished. Discovered {len(all_seq_counts)} ALL frequent patterns and {len(max_seq_counts)} MAXIMAL sequential patterns.")
+    print(
+        f"\nOK: Execution finished. Discovered {len(all_seq_counts)} ALL frequent patterns and {len(max_seq_counts)} MAXIMAL sequential patterns.")
     print(f"All frequent sequences saved to: {out_all}")
     print(f"Maximal sequences saved to: {out_max}")
+
 
 if __name__ == "__main__":
     main()

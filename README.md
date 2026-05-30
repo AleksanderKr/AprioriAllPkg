@@ -44,8 +44,8 @@ You can run and evaluate the entire toolkit directly in your browser using our p
 
 The package supports two primary data structures:
 
-### 1. CSV Format (Long Format)
-When mining sequential patterns (`apriori_all`), the software expects a CSV file representing data in a "long format". The file must contain a header with the following columns:
+### 1. CSV Format
+When mining sequential patterns (`apriori_all`), the software expects a CSV file representing data in a long format. The file must contain a header with the following columns:
 * `sequence_id` (integer or string): Uniquely identifies a specific sequence.
 * `pos` (integer or timestamp): Denotes the chronological position or order of the event within the sequence.
 * `item` (integer or string): The specific item or event occurring at that position.
