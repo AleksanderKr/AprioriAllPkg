@@ -1,6 +1,6 @@
 # AprioriAllPkg: Association and Sequential Pattern Mining Toolkit
 
-[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/username/AprioriAll/main?labpath=AprioriAllDemo.ipynb)
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/AleksanderKr/AprioriAllPkg/HEAD?urlpath=%2Fdoc%2Ftree%2FAprioriAllDemo.ipynb)
 AprioriAllPkg is a Python toolkit for sequential pattern discovery (AprioriAll) and frequent itemset mining (Apriori). It natively supports both standard CSV (long format) and SPMF sequence formats.
 
 ## Table of Contents
